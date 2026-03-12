@@ -1,0 +1,159 @@
+name: Build And Release Debian Package
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-deb
+  cancel-in-progress: false
+
+jobs:
+  build-release:
+    runs-on: ubuntu-20.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            gcc-10 \
+            g++-10 \
+            python3 \
+            curl \
+            tar \
+            unzip \
+            xz-utils
+
+      - name: Build Linux app from latest DMG
+        env:
+          npm_config_python: /usr/bin/python3
+        run: |
+          rm -f Codex.dmg
+          chmod +x install.sh
+          ./install.sh
+
+      - name: Apply committed patch bundle
+        run: |
+          python3 - <<'PY'
+          import json
+          import shutil
+          import subprocess
+          from pathlib import Path
+
+          bundle_dir = Path("patches/codex-desktop")
+          manifest = json.loads((bundle_dir / "manifest.json").read_text(encoding="utf-8"))
+          asar_path = Path("codex-app/resources/app.asar")
+          unpacked_dir = asar_path.with_name(f"{asar_path.name}.unpacked")
+          work_root = Path("patch-work/ci")
+          extract_dir = work_root / "extract"
+          packed_dir = work_root / "packed"
+          packed_asar = packed_dir / asar_path.name
+          packed_unpacked = packed_dir / f"{asar_path.name}.unpacked"
+
+          if work_root.exists():
+              shutil.rmtree(work_root)
+          work_root.mkdir(parents=True, exist_ok=True)
+
+          subprocess.run(
+              ["npx", "--yes", "asar", "extract", str(asar_path), str(extract_dir)],
+              check=True,
+          )
+
+          def copy_tree(src: Path, dst: Path) -> None:
+              for path in src.rglob("*"):
+                  rel = path.relative_to(src)
+                  target = dst / rel
+                  if path.is_dir():
+                      target.mkdir(parents=True, exist_ok=True)
+                  else:
+                      target.parent.mkdir(parents=True, exist_ok=True)
+                      shutil.copy2(path, target)
+
+          for item in manifest.get("copy_tree", []):
+              copy_tree(bundle_dir / item["from"], extract_dir / item["to"])
+
+          for rule in manifest.get("replacements", []):
+              matched_files = sorted(extract_dir.glob(rule["glob"]))
+              if not matched_files:
+                  raise SystemExit(f"No files matched {rule['glob']} for {rule['name']}")
+
+              total_replacements = 0
+              already_present = False
+              for path in matched_files:
+                  text = path.read_text(encoding="utf-8")
+                  if rule["find"] in text:
+                      total_replacements += text.count(rule["find"])
+                      text = text.replace(rule["find"], rule["replace"])
+                      path.write_text(text, encoding="utf-8")
+                  elif rule.get("already_contains") and rule["already_contains"] in text:
+                      already_present = True
+
+              expected = rule.get("count")
+              if total_replacements == 0:
+                  if already_present:
+                      continue
+                  raise SystemExit(f"Rule did not match: {rule['name']}")
+              if expected is not None and total_replacements != expected:
+                  raise SystemExit(
+                      f"Rule {rule['name']} replaced {total_replacements} occurrences, expected {expected}"
+                  )
+
+          packed_dir.mkdir(parents=True, exist_ok=True)
+          subprocess.run(
+              [
+                  "npx",
+                  "--yes",
+                  "asar",
+                  "pack",
+                  str(extract_dir),
+                  str(packed_asar),
+                  "--unpack",
+                  "*.node",
+              ],
+              check=True,
+          )
+
+          shutil.copy2(packed_asar, asar_path)
+          if unpacked_dir.exists():
+              shutil.rmtree(unpacked_dir)
+          if packed_unpacked.exists():
+              shutil.copytree(packed_unpacked, unpacked_dir)
+          PY
+
+      - name: Build Debian package
+        run: |
+          chmod +x build-deb.sh
+          ./build-deb.sh
+
+      - name: Collect build metadata
+        run: |
+          echo "APP_VERSION=$(tr -d '\n' < codex-app/version)" >> "$GITHUB_ENV"
+          echo "DEB_PATH=$(find dist -maxdepth 1 -type f -name '*.deb' | head -n 1)" >> "$GITHUB_ENV"
+
+      - name: Upload Debian artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-desktop-linux-${{ env.APP_VERSION }}-deb
+          path: ${{ env.DEB_PATH }}
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: codex-desktop-linux-v${{ env.APP_VERSION }}
+          name: Codex Desktop Linux v${{ env.APP_VERSION }}
+          files: ${{ env.DEB_PATH }}
+          generate_release_notes: true
+          overwrite_files: true

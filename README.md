@@ -156,6 +156,20 @@ Then make sure the Codex CLI exists for the launcher:
 npm i -g @openai/codex
 ```
 
+## GitHub Actions release automation
+
+The workflow [`release-deb.yml`](.github/workflows/release-deb.yml) runs on `ubuntu-20.04` and can be triggered manually or on the daily schedule.
+
+It performs the full pipeline:
+
+1. downloads the latest upstream `Codex.dmg`
+2. runs `install.sh`
+3. reapplies the committed patch bundle from `patches/codex-desktop/`
+4. runs `build-deb.sh`
+5. publishes `dist/*.deb` to a GitHub Release tagged as `codex-desktop-linux-v<app-version>`
+
+The workflow uses the repository `GITHUB_TOKEN` with `contents: write` so it can create or update the release for a given upstream app version.
+
 ## Updating to a new Codex release
 
 When a new upstream `Codex.dmg` appears, redo the build in this order:
