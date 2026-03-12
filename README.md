@@ -8,6 +8,38 @@ This repo now has three clear layers:
 2. your private local helper can reapply custom patches to `app.asar`
 3. `build-deb.sh` packages the finished app into a Debian package
 
+## Quick start
+
+If you only want to use a prebuilt Debian package, you do not need the compiler toolchains from the build instructions.
+
+### Install a prebuilt `.deb` on Debian or Ubuntu
+
+Install the minimum prerequisites:
+
+```bash
+sudo apt update
+sudo apt install -y nodejs npm
+```
+
+Install the package, then let `apt` resolve any missing runtime libraries:
+
+```bash
+sudo dpkg -i ./codex-desktop-linux_40.0.0-1_amd64.deb
+sudo apt -f install -y
+```
+
+Install the Codex CLI required by the desktop launcher:
+
+```bash
+npm i -g @openai/codex
+```
+
+Then launch `Codex Desktop` from the app menu, or run:
+
+```bash
+codex-desktop
+```
+
 ## Repository layout
 
 Tracked source files:
@@ -29,13 +61,17 @@ Generated or local-only paths:
 
 ## Requirements
 
-You always need the Codex CLI on the target machine:
+For a prebuilt `.deb`, you only need:
+
+- `Node.js`
+- `npm`
+- the `codex` CLI (`npm i -g @openai/codex`)
+
+For building the Linux app from the macOS DMG, you also need:
 
 ```bash
 npm i -g @openai/codex
 ```
-
-To build the Linux app from the macOS DMG, you also need:
 
 - `Node.js 20+`
 - `npm`
